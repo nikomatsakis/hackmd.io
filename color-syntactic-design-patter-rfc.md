@@ -12,21 +12,51 @@ title: 'RFC: The "color" syntactic design pattern'
 [RFC #2071]: https://github.com/rust-lang/rfcs/blob/master/text/2071-impl-trait-existential-types.md
 [asyncfg]: https://rust-lang.github.io/rust-project-goals/2024h2/async.html
 [droporder]: https://github.com/rust-lang/rust/blob/0b16baa570d26224612ea27f76d68e4c6ca135cc/compiler/rustc_ast_lowering/src/item.rs#L1179-L1210
+[WCIF]: https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/
 
 # Summary
 [summary]: #summary
 
-This RFC unblock the stabilization of async closures by committing to `K $Trait` (where `K` is some keyword like `async` or `const`) as a pattern that we will use going forward to define a "K-variant of `Trait`". This commitment is made as part of committing to a larger *syntactic design pattern* called "`K`-color". The `K`-color pattern codifies how a "color keyword" `K` (e.g., `async`) can be used in various contexts within Rust contexts with consistent syntax:
+This RFC unblock the stabilization of async closures by committing to `K $Trait` (where `K` is some keyword like `async` or `const`) as a pattern that we will use going forward to define a "K-variant of `Trait`". This commitment is made as part of committing to a larger *syntactic design pattern* called "colors".
 
-* `K fn $name() -> $type` to define a K-function (e.g., async, const, etc)
-* `K [move] { $expr }` to define a K-block
+In the color pattern, each color is tied to a specific keyword `K`. Colors share the "infectious property": code with color `K` interacts naturally with other code with color `K` but only interacts in limited ways with code without the color `K`.
+
+Using `async` as the driving example, the RFC enumerates a complete "syntactic pattern" for how `K` can be applied to various pieces of code in order to enable full interop. Many parts of this pattern exist in Rust today. Other parts are specified by accepted RFCs. Still other parts are only described in pending RFCs. 
+
+The complete set of syntactic patterns is as follows:
+
+* `K fn $name() -> $ty` to define a K-function (e.g., async, const, etc)
+* `K { $expr }` to define a K-block (and potentially `K move { $expr }`)
 * `K $Trait` to reference the K-variant of a trait `$Trait`
 * `K [move] |$args| $expr` to define a K-closure (which implements a `K Fn{,Mut,Once}` trait and returns the result of a `K move { $expr }` block)
-* a still TBD syntax `🚲K<$T>` that indicates the "colorized" result type that you get from executing a K-block or calling a K-function or K-closure
+* a still TBD syntax `🚲K<$ty>` that indicates the "colorized" result type that you get from executing a K-block or calling a K-function or K-closure
 
-The RFC uses this color pattern to describe two existing keywords, `async` and `const`. The RFC includes (non-binding) recommendations for future language work that would help the pattern to apply more fully. The future work section explores how other existing or planned features could be included in this framework.
+The color pattern also describes transformations and "rough equivalences" that users can expect:
 
-This RFC itself does NOT define any particular semantics nor add new features. Instead, it describes a latent syntactic pattern that exists in Rust today, expands on that pattern to reach a logical conclusion, and commits to that pattern going forward. This RFC does not commit us to adding any particular feature but it does define the syntax that we would use for some future features that are under consideration and it suggest other features we might consider adding (and constrains the syntax we would use if we were to do so).
+* A `K`-function `K fn $name($args) -> $ty { $expr }` is equivalent to a regular function that wraps its return type and body with `K`:
+    * `fn $name($args) -> 🚲K<$ty> { K { $expr } }`
+* `K`-colored traits should offer at least the same methods, associated types, and other trait items as an uncolored version of the trait. Some of the items will be `K`-colored, but not necessarily all of them.
+* A `K`-closure `K |$args| $expr` implements `K Fn` traits. Where possible, `K`-closures should be equivalent to a regular closure returning a `K`-block (but this is not always possible).
+* Some kind of operation to take a `🚲K<$ty>` value and extracts the underlying `$ty`. This operation may or may not be valid outside of `K`-blocks.
+
+Put together, this pattern enables fully functional interop for code with color `K`. The RFC therefore recommends that keywords that act "like a color" generally try to implement as much of the pattern as possible. But not all keywords require or fit the entire pattern. In addition to async, the RFC explores `const`, showing how it can be viewed as a color and which parts of the pattern fit and which do not. The [Future Possibilities](#future-possibilities) section considers how other keywords like `unsafe` could be made to fit the color pattern more fully.
+
+The RFC's binding recommendations are as follows:
+
+* Commit to `K $Trait` as the syntax for applying colors to traits.
+* Commit to adding a TBD syntax `🚲async<$ty>` that will meet the equivalences described in this RFC.
+* Consider whether current or feature languages are "color-like". If so, follow as much of the pattern as is applicable, and justify any divergences from the pattern.
+
+These recommendations are ultimately fairly limited. Most of the design work related to colors is yet to be done and will be addressed in future RFCs. Examples of things that this RFC does NOT specify (but which early readers thought it might):
+
+* Any form of "effect" or "color" generics:
+    * Colors in this RFC are a pattern for Rust designers to keep in mind as we explore possible language features, not a first-class language feature; this RFC also does not close the door on making them a first-class feature in the future.
+* Whether or how `async` can be used with traits beyond the `Fn` traits:
+    * For example, the RFC specifies that **if** we add an async version of the `Read` trait, it will be referred to as `async Read`, but the RFC does **not** specify whether to add such a trait nor how such a trait would be defined or what its contents would be.
+* How `const Trait` ought to work ([under active exploration][#67792]):
+    * The RFC only specifies that the syntax for naming a `const`-colored trait should be `const Trait`; it does not specify what a `const`-colored trait would mean or when that syntax can be used.
+* What specific syntax we should use for `🚲K<$ty>`:
+    * We are committed to adding this syntax at least for `async`, but the precise syntax still needs to be pinned down. [RFC #3628][] contains one possibility.
 
 # Motivation
 [motivation]: #motivation
@@ -39,37 +69,49 @@ The lang team discussed the syntax question [in a design meeting][DM] and conclu
 
 [DM]: https://hackmd.io/@rust-lang-team/rJxAOyWaC
 
-In other words, if users wrote `async Fn` to get an async version of a closure but `AsyncDefault` to get the async version of the `Default` trait, that would be confusing. In contrast, if the pattern to get the async version of a trait is always to write the `async` keyword (e.g., `async Fn` and `async Default`), that is appealing.
+In other words, if users wrote `async Fn` to get an async version of a closure but `AsyncRead` to get the async version of the `Read` trait, that would be confusing. In contrast, if the pattern to get the async version of a trait is always to write the `async` keyword (e.g., `async Fn` and `async Read`), that is appealing. This is true even if the `async Read` trait is defined in a very separate way from its sync counterpart.
 
 We also observed that there is a need for having "variants of traits" in other similar contexts, most notably `const`, where there is [active experimentation for a const-trait design][#67792]. If we further extend the pattern to cover those cases, so that one writes (e.g.) `const Fn` or `const Default` to the "const versions of the `Fn` or `Default` traits" respectively, then these two instances of the same pattern reinforce one another, helping to create a coherent whole. Any future instances we add would only strenghten this effect.
 
-## Tenet: syntactic consistency has value even if semantics diverge
+## A latent set of "colors" exists in Rust today
 
-The heart of this RFC is defining a **syntactic design pattern** called the *color* pattern. The pattern is defined by a series of rules that specify what syntax to use for each place the color can be applied. The term color is a playful reference to the famous ["What color is your function?"][WCIF] blog post.
+Looking more closely at `async` and `const`, we see that there is a latent concept within Rust that we refer to as **colors**. The term color is a playful reference to the famous ["What color is your function?"][WCIF] blog post.
 
-[WCIF]: https://journal.stuffwithstuff.com/2015/02/01/what-color-is-your-function/
+Each color has an associated keyword `K` that can be applied to functions and blocks. Code with the color `K` interoperates fully with other code with the same color; working across colors is generally more limited:
 
-A *color* as defined by this RFC is a keyword `K` that can be applied to (at least) blocks and functions. The characteristic of a color is that code with color `K` is typically only usable from other code with color `K`. The RFC explores two colors in depth (`async` and `const`) and includes discussion of other potential colors in the [future possibilities](#future-possibilities) section. 
+* `async` functions return an `impl Future` which can only be `await`'d from another `async` block.
+* `const` functions can only call other `const` functions.
 
-The premise of this RFC is that color keywords like `const` and `async` "feel similar" to users and should be used in syntactically similar ways, even though their semantics diverge. The goal is to make these colors, and any future "color-like" features, feel as consistent and predictable as possible, so that users can develop "muscle memory" that helps them to predict syntax they haven't used or seen yet.  The RFC describes the syntax to use for a color keyword applied to various constructs as well as some of the "approximate equivalences" that colors should generally hold.
+## Role of this RFC: identify and describe this pattern
 
-## This RFC says what syntax to use when adding features; it doesn't add them
+Code with a given color `K` is meant to interoperate fully with other code with the same color, but in practice that is not the case. This is precisely the gaps we are aiming to close by considering features like [async closures][RFC #3668] or [const traits][#67792]. The role of this RFC is to identify the "color pattern" and carry it to its logical conclusion.
 
-The goal of the RFC is NOT to define particular semantics for any particular color. Rather, it defines syntactic patterns that we should use going forward when we have "color-like" features. For example, if we wish to have a colorized version of a trait, the RFC specifies that this should be done with the syntax `K $Trait`, where `K` is the color keyword.
+We apply the pattern to the `async` keyword and use it to justify that certain features ought to be added. We are therefore committing to adding those features with this RFC; but we are not presenting a concrete design, that will be done in follow-up RFCs.
 
-**The RFC does not require that all colors be usable on traits:** for the moment, the only "colorized" traits would be the `async Fn` traits defined by [RFC #3668][]. However, the RFC would be binding on future async traits: e.g., if we define an async version of the `Drop` trait in the future, it should be referred to as `async Drop`; when/if we gain support for const-ified traits, they should be written `const $Trait`.
+## Tenet: consistent syntax and transformations makes Rust easier to learn
+
+The premise of this RFC is that color keywords like `const` and `async` "feel similar" to users and should be used in syntactically similar ways, even though their purpose and semantics diverge. The goal is to make these colors, and any future "color-like" features, feel as consistent and predictable as possible, so that users can develop "muscle memory" that helps them to predict syntax they haven't used or seen yet.  The RFC describes the syntax to use for a color keyword applied to various constructs as well as some of the "approximate equivalences" that colors should generally hold.
+
+## Tenet: all parts of the color pattern should have explicit syntax centered on the keyword `K`
+
+One of the recommendations of this RFC is committing to add a `K`-colored type syntax in the future, similar to what is proposed in [RFC #3628][]. The motivation for this is that it is important when teaching colors to be able to teach the *color specifically*, without having to reference additional language features like `impl Trait`. This addresses feedback we have received from Rust trainers which is that one of the difficulties in teaching Rust is that users can't learn Rust in "layers", they have to learn all parts of Rust at once before any of it makes sense.
+
+## Tenet: no false equivalence, but partial consistency is better than none
+
+Just because colors share many elements doesn't make them equivalent. We also describe how the color pattern applies to `const` and show why some parts of the pattern don't make sense in that context. We think that `const` should use the pattern where it makes sense, but avoid it (or use a distinct pattern) where it does not fit.
+
+## Conclusion: follow the pattern for present and future colors, or explain why you don't
+
+Looking forward, this RFC doesn't make binding statements about [future language features](#future-possibilities), but it does strongly suggest that we follow the color pattern where it makes sense. If a feature has some parts of the pattern, we should either add the other parts or offer an explanation why they don't apply.
 
 # Guide-level explanation
 [guide-level-explanation]: #guide-level-explanation
 
-This section introduces the rules of the "color pattern" more precisely as a series of five steps:
+Our guide-level explanation proceeds in three phases:
 
-1. When is a keyword `K` a color?
-2. `K`-colored functions, blocks, traits, and closures
-3. `K`-colored types
-4. Relationship between `K`-colored functions, blocks, closures, and types
-
-The "color pattern" is meant to guide Rust designers as we extend the language, not to be something directly taught to end users. To illustrate how it might feel, we also include an example of teaching `async` leveraging the syntax and concepts of the color pattern (but not teaching the pattern explicitly).
+1. We begin by **defining the color pattern**, using the example of `async`.
+2. Next, we develop a subset of this pattern appropriate for **effect-carrying colors**, using the example of `const` and examining how it differs from `async`.
+3. Finally, we include an example of **teaching `async`**, with the goal of demonstrating how the parts of the color pattern work together to form a coherent whole. Note that colors themselves are not a user-facing concept that we teach explicitly.
 
 ## Defining the "color pattern"
 
@@ -77,14 +119,18 @@ The "color pattern" is meant to guide Rust designers as we extend the language, 
 
 We begin by defining the criteria where we, as language designers, should consider using the color pattern for a keyword `K`. Given the color patterns informality, there is no hard and fast rule for this, but the primary criteria to consider are as follows:
 
-1. The keyword `K` should be applicable to functions and blocks of code.
-    * `const fn foo()`, `const { .. }`
-    * `async fn foo()`, `async { .. }`, `async move { .. }`
-2. `K`-colored code should generally only be usable with other `K`-colored code.
-    * `const` functions can only call other `const` functions
-    * `async` functions return futures that can only be awaited from async blocks
+1. The keyword `K` is used to "color" code, in the form of functions and blocks.
+2. `K`-colored code works best when used with other `K`-colored code; working with "uncolored" code is limited.
 
-Colors can encompass a broad range of keywords with diverse effects. Both `async` and `const` fit the definition for a color above despite being very different on a semantic level. The other current keyword in Rust that could be considered a color is `unsafe`; we explore what it might mean to use the color pattern for `unsafe` in the [Future Possibilities](#future-possibilities) section.
+Apart from these minimal criteria, colors can encompass a broad range of keywords with diverse effects.
+
+#### Example: `async`
+
+Applying these concepts to `async`:
+
+* Rust supports `async` functions and blocks.
+* `async` functions and blocks return an `impl Future`. Awaiting futures is only possible from within other `async` functions or blocks.
+    * It is possible to "block on" a future or interact with it in other ways from outside of `async` code, but it's difficult.
 
 ### `K`-colored functions, blocks, traits, and closures
 
@@ -95,12 +141,25 @@ The syntax to use when applying colors to functions, blocks, traits, and closure
 * `K $Trait` for traits (generalizing the precedent set by [RFC #3668][])
 * `K |$args| $expr` for closures (generalizing the precedent set by [RFC #3668][])
 
-The first two rules are the way that `async` and `const` are used today, and they both demonstrate the precedent that color keywords `K` are applied as a *prefix* to the things they modify. The second two rules are generalizing the precedent set by [RFC #3668][], which introduces the `async Fn` traits and  the `async ||` closure syntax. 
+#### Example: `async`
+
+Function and block syntax lines up with existing, stable `async` syntax:
+
+* `async fn foo() { }`
+* `let future = async move { /* ... */ };`
+
+Trait and closure syntax follows the precedent described in [RFC #3668][]:
+
+* `async Fn` as the async version of the `Fn` trait
+* `async || /* ... */` as the syntax for an async closure.
+
+Across all examples we see a consistent pattern that `async` appears as a prefix, consistent with its role as a kind of adjective (which in English grammar appears first).
 
 #### What is new in this RFC
 
 1. Resolving the unresolved question from [RFC #3668][] in the affirmative (yes, we will use the `async Fn` syntax).
-2. Committing to extend that syntax to any other colors, notably `const`, that may be applied to traits in the future.
+2. Committing to use `async $Trait` as the syntax for any future `async`-colored traits we may add.
+3. Committing to use `K $Trait` as the syntax for any other form of `K`-colored traits we may add (e.g., `const`-colored).
 
 #### What this RFC does NOT specify
 
@@ -108,9 +167,11 @@ This RFC should NOT be understood as adding any form of `K`-colored traits. For 
 
 ### `K`-colored types
 
-The `async` color is different from `const` in that it is a **rewrite color**. Code colored by a rewrite color executes differently than ordinary code and produces a value of a different type. So `async { 22 }` does not produce an `i32` but rather a `impl Future<Output = u32>`. We expect there to be future colors (e.g., `try`, described under [future possibilities](#future-possibilities)) that operate in a similar fashion.
+#### Background: what is a `K`-colored type and why might we want it?
 
-Users writing `async fn` sugar don't have to write out the `impl Future` syntax directly, but they do sometimes encounter it nonetheless. One reason might be writing a function that takes a future as argument. Another common reason is to write an async function that performs some actions synchronously and others when awaited:
+When you tag a block or function with `async`, it changes its result type to `impl Future<Output = $ty>`, where `$ty` is the type that would normally have been produced. This characteristic is shared with some other prospective colors (e.g., [`try` and `gen`](#future-possibilities)), but not all: it corresponds to cases where the code executes differently in some way from ordinary code.
+
+Currently there is no special syntax for this type translation. That is, the only way to reference the "type produced by an async block" is to write an explicit `impl Future`. One example where this comes up frequently is when users wish to write an `async fn` that will execute *some* code eagerly and defer the rest to execute when the future is awaited. The way to do this today is to write a regular function that returns `impl Future`:
 
 ```rust
 fn do_something() -> impl Future<Output = ()> {
@@ -121,7 +182,8 @@ fn do_something() -> impl Future<Output = ()> {
 }
 ```
 
-Having users write `impl Future<Output = T>` explicitly in cases like this has downsides. To start, it is verbose. But also, as a new user of Rust, it requires understanding an unrelated concept (`impl Trait` syntax) in order to write async code.
+
+Having users write `impl Future<Output = T>` explicitly in cases like this has downsides. To start, it is verbose. But also, as a new user of Rust, it requires understanding several unnecessary concepts (the trait system, the `Future` trait, `impl Trait` syntax) in order to write async code like this.
 
 To address these issues, [RFC #3628][] proposes adding a new syntax for "the type that results from an `async` block", but that RFC has not been accepted. Accepting the RFC would require answering two questions:
 
@@ -129,23 +191,24 @@ To address these issues, [RFC #3628][] proposes adding a new syntax for "the typ
 2. If so, precisely what syntax should we use?
     * The RFC proposes `async<T>`, but other syntaxes have been proposed, such as `async -> T`, `impl async -> T`, and `impl Future -> T`.
 
-Similarly to the question of `async Fn` syntax, members of the lang team felt that the case for [RFC #3628][] was stronger if the syntax was not something specific to `async` but rather part of a broader pattern used by multiple colors. Therefore, this RFC proposes to settle this first question ("should we add a syntax beyond `impl Future`") in the affirmative. However, we do not yet know what syntax we would like (see [future possibilities](#future-possibilities) for more considerations) and therefore we are leaving the precise syntax TBD to be specified by a future RFC.
+#### Conclusion: we do want a syntax, but we don't know what it should be yet
+
+In discussion the lang team concluded that having an explicit syntax for "the result of an async block" that was tied to the `async` keyword was a good idea. However, similarly to the question about trait syntax, the syntax is most desirable if it is part of a larger pattern. In this case, it is part of two larger patterns: one is using the `async` keyword as a prefix to transform all things related to async (functions, blocks, traits, closures, and now types). The second is that other future color keywords may employ a similar syntax (e.g., [`try`](#try-as-a-color) or [`gen`](#gen-as-a-color)).
 
 #### What is new in this RFC
 
-This RFC commits us to adding, for every rewriting color `K` (currently only `async`), **some (TBD) syntax `🚲K<$ty>` for describing the result of a `K`-colored block**. This syntax should involve the keyword `K` in some form. The behavior of this syntax may vary depending on where it is used, just like `impl Trait`. The notation `🚲K<$ty>` will be used in this RFC as a placeholder for a precise syntax to be specified in some future RFC.
-
-The type `🚲K<$ty>` relates to the type of functions and closures as follows:
-
-1. A `K`-function `K fn foo() -> T { $expr }` has a body that returns a value of type `T`. When called, however, its caller receives a `🚲K<T>` value.
-2. A `K`-closure `K |$args| -> T { $expr }` has a body that returns a value of type `T`. It implements the trait `K Fn<Output = T>`. This trait ensures that when the closure is called its caller receives a `🚲K<T>` value.
-
-#### Example for async
-
-`🚲async<$ty>` is therefore defined as `impl Future<Output = $ty>`. Note that `🚲async<$ty>` is not a Rust type alias but a syntactic substitution, and therefore the `impl` keyword here has a different role depending on where it appears (in [function arguments][apit], it corresponds to a new generic argument to the fn; in [return position][rpit], it corresonds to an [abstract return type][rpit], etc).
+This RFC commits us to adding *some* form of this syntax for `async` but defer the bikeshed for [RFC #3668][] or some future RFC. We refer to this future syntax `🚲async<$ty>`. Usage of this syntax should be equivalent to typing `impl Future<Output = $ty>`. Note that `🚲async<$ty>` is not a Rust type alias but a syntactic substitution, and therefore the `impl` keyword here has a different role depending on where it appears (in [function arguments][apit], it corresponds to a new generic argument to the fn; in [return position][rpit], it corresonds to an [abstract return type][rpit], etc).
 
 [apit]: https://doc.rust-lang.org/stable/reference/types/impl-trait.html#anonymous-type-parameters
 [rpit]: https://doc.rust-lang.org/stable/reference/types/impl-trait.html#abstract-return-types
+
+This RFC also recommends that future colors which "transform" the result of a block or function introduce a corresponding syntax.
+
+Where `🚲K<$ty>` exists it should meet the following invariants:
+
+1. A `K`-function `K fn foo() -> T { $expr }` has a body that returns a value of type `T`. When called, however, its caller receives a `🚲K<T>` value.
+2. A `K`-block `K { $expr }` where `$expr: $ty` has type `$ty` produces a result of type `🚲K<T>` value.
+3. A `K`-closure `K |$args| -> T { $expr }` has a body that returns a value of type `T`. It implements the trait `K Fn<Output = T>`. This trait ensures that when the closure is called its caller receives a `🚲K<T>` value.
 
 ### Relationship between `K`-colored functions, blocks, and types
 
@@ -169,9 +232,68 @@ fn count_input(urls: &[Url]) -> 🚲async<usize> {
 
 #### What is new in this RFC:
 
-To ensure consistency between colors, this general relationship should hold for future rewrite colors: 
+This RFC recommends that future colors that define `🚲K<$ty>` meet this invariant:
 
 * A `K fn foo() -> T` should be equivalent to a (uncolored) `fn` that returns `🚲async<T>` and uses some form of `K`-colored block.
+
+In some cases, colors may meet a different invariant, where the color `K` is preserved on the `fn`:
+
+* A `K fn foo() -> T` should be equivalent to a `K fn` that returns `🚲async<T>` and uses some form of `K`-colored block.
+
+This is appropriate in cases where the presence of color `K` is flagged some form of pervasive effect.
+
+## The "effect-carrying color" pattern
+
+The previous section defined the color pattern in full with reference to `async`. Examining the criteria for colors, there are two other existing keywords in Rust that ought to be considered: `unsafe` and `const`. This section explores `const` specifically; `unsafe` is discussed in the [Future Possibilities](#future-possibilities) section. We begin by comparing `const` and `async`, identifying some key differences, and based on those differences identifying the subset of the color pattern that applies to const. We suggest that this subset may also apply to other colors that share these characteristics.
+
+### At first glance, `const` and `async` seem very different
+
+Both async and const can be applied to blocks and functions, but there are important differences between them. Async changes how a function body is compiled and the type of value that is produced; the result of async functions (and async blocks) are only usable from other async contexts.
+
+In contrast, `const` limits the operations a function can perform to those that the compiler can execute at runtime. It does not change how a function is compiled at runtime nor does it change the type of value that is produced.
+
+The relationship between `async` functions and `async` blocks is also different in kind than the relationship between `const` functions and `const` blocks. An `async` function is sugar for a function with an `async` block in its body (and a different return type). In contrast, a `const` function is something that can be run at compilation or runtime, and a `const` block is code that *only* runs at compilation time.
+
+And yet, despite all these differences, both `const` and `async` intuitively *feel* very similar -- they both *feel* like colors to users, as argued in the motivation. How to understand this?
+
+### `const` is best understood as an inverted default for a `runtime` color
+
+The natural orientation for colors is additive: having a `K`-colored block gives access to additional capabilities. `const`, in contrast, is a *subtractive* color. A `const` function can do fewer things than an ordinary function. To see the difference, imagine an alternate form of Rust, Runtime-Rust. Runtime-Rust works exactly like Rust, but the defaults are flipped: code blocks, by default, execute at compilation time. To execute at runtime, they must be tagged with `runtime { ... }`, which in turn gives them access to capabilities that are only permitted at runtime, like FFI. This `runtime` color matches `async` much more closely: just as `async` blocks can only fully be used from inside another `async` block, `runtime` blocks can only be used from inside `runtime` blocks. What this thought experiment shows is that `const` is actually an inverted default, like `?Sized`.
+
+### What parts of the pattern work for `runtime`?
+
+Continuing with the RuntimeRust hypothetical, most parts of the color pattern apply equally well to `runtime` and `async`:
+
+* `K`-colored functions, blocks, and closures are prefixed with the keyword `K`.
+* `K`-colored traits are prefixed with the keyword `K`.
+    * A `K`-colored trait `Trait` include (at least) the members of `Trait`, with some of them colored by `K`.
+* `K`-colored functions and closures implement `K`-colored variants of the `Fn` trait.
+
+There is one part however that doesn't really fit:
+
+* `K`-colored types can be written with the syntax `🚲K<T>`:
+    * `K`-colored functions, closures, and blocks return/produce `🚲K<T>` values, where `T` is their original type.
+
+Introducing a `🚲runtime<T>` syntax to describe a "runtime-colored type" doesn't make sense, because `runtime` blocks don't change the type of value that is produced. So `🚲runtime<T> = T` always. We don't need syntax for this and having it would be confusing.
+
+The next that doesn't fit is the equivalence between a `K`-colored function and a function returning a `K`-block:
+
+* `K fn $name() -> T { $expr }` is equivalent to `fn $name() -> 🚲K<T> { K { $expr } }`
+
+This equivalence doesn't work because the `runtime` color cannot be *encapsulated*. You can't have a compilation time function that uses a `runtime` block internally but hides it from its callers. In contrast, you *can* have a synchronous Rust function that creates an `async` block internally and executes it by polling in place or some other means.
+
+### The "effect-carrying color" subset of the color pattern
+
+Based on our discussion of `runtime`, we can identify a subset of colors which we will call *effect-carrying* colors. Effect-carrying colors indicate blocks of code that are capable of performing "extra" operations beyond what is available in an uncolored block. Because these colors don't change how code is compiled, they don't change the type of value that is produced. Further, the transformation from `K fn $name` to a function with a `K`-block doesn't work, because the point of a `K fn` is to signal to callers that the effect will take place.
+
+For effect-carrying colors, the parts of the color pattern which make sense are the following:
+
+* `K`-colored functions, blocks, and closures are prefixed with the keyword `K`.
+* `K`-colored traits are prefixed with the keyword `K`.
+    * A `K`-colored trait `Trait` include (at least) the members of `Trait`, with some of them colored by `K`.
+* `K`-colored functions and closures implement `K`-colored variants of the `Fn` trait.
+
+The other points do not apply. The implication of this is that we should support `const`-colored traits and `const`-colored closures and we should use the same prefix syntax used by `async`.
 
 ## Teaching async via the "color pattern"
 
@@ -344,7 +466,7 @@ The most obvious difference is that where most languages put `await` as a prefix
 
 The other, more subtle, difference has to do with Rust's execution model. In most languages, calling an async function implicitly starts up a background task that will continue executing. Rust, like Kotlin, takes a different approach: calling an async function returns a suspended computation, which on its own is inert. That future can then by combined with other futures to form aggregates, like the `join!` operation that we saw in the previous example. Eventually, the future or the aggregate that it is embedded into must be awaited -- and, when it is, that will block your current task until it completes.
 
-If you'd like the async functon to execute in the background, then you need to use a `spawn` function to create a new task (analogous to spawning a new thread in synchronous code). Rust itself does not provide a spawn function, but one is typically provided by your async runtime. The most common choice here is `tokio`, which offers [`tokio::spawn`](XXX):
+If you'd like the async functon to execute in the background, then you need to use a `spawn` function to create a new task (analogous to spawning a new thread in synchronous code). Rust itself does not provide a spawn function, but one is typically provided by your async runtime. The most common choice here is `tokio`, which offers [`tokio::spawn`](https://docs.rs/tokio/latest/tokio/task/fn.spawn.html):
 
 ```rust
 let data_future = tokio::spawn(async move { load_data(urls).await });
@@ -509,25 +631,32 @@ In authoring this RFC, we also explored what future colors might look like. Thre
 
 Unlike `async` and `const`, these three keywords are not themselves  *colors* but more like *families of colors*. `unsafe` for example indicates that the function has safety predicates that must be proven before it can be called and hence the "true color" conceptually includes those predicates (though we don't write them explicitly in our notation). `try` and `gen` both have other types associated with them beyond the main output type.
 
-### `unsafe` as a color
+### `unsafe` as an effect-carrying color
 
-`unsafe` can be considered a color somewhat like `const` (or, more precisely, like the imaginary [`runtime` color](#const-functions-cant-be-rewritten-to-have-a-const-block-in-their-body-is-that-inconsistent-with-async)) described in the FAQ). Because unsafe blocks execute in the same way as ordinary blocks, it would not be a rewrite color.
+`unsafe` can be considered an effect-carrying color, although it has semantic differences from an effect like `runtime`. `unsafe` doesn't itself indicate some kind of action that takes place but rather the requirements to safely use a piece of code. Furthermore the `unsafe` color, despite being 1 keyword, is really a "set" of colors, in that each `unsafe fn` has its own safety requirements that are distinct from one another.
 
-Considering `unsafe` as a color would suggest supporting `unsafe`-colored traits like `unsafe Default`. This would indicate a type for which creating a `Default` value is unsafe.
+If we decided to treat `unsafe` as a color, we would add the concept of an `unsafe Trait`, which would be a version of `Trait` where some items are `unsafe`. This could be used for `unsafe` closures, which would implement `unsafe Fn`, and which would signal to their callers that they require special requirements to be invoked. Rust already has a concept like this in the form of types like `unsafe fn()`. Unlike a type like `fn()`, the `unsafe fn()` type does not implement the `Fn` trait because there is no way to reflect that unsafety in the trait.
 
-There are a few complications to considering `unsafe` as a color:
+There is a complication to considering `unsafe` as a color because we already have a notion of an `unsafe` trait, with a distinct meaning. An unsafe trait is one where implementors prove a safety predicate relied on by the caller, as opposed to an `unsafe`-colored trait, which is a trait where the caller proves a safety predicate relied upon by the impl.
 
-* First, there is not just one notion of unsafe. Consider `unsafe Default`: presumably every type implementing `unsafe Default` has its own safety predicate that must be proven before its `unsafe Default` impl could be used. This implies that the "true" color is something like `unsafe(predicate)`, where the `predicate` is implied and unwritten.
-* Second, we already have a notion of unsafe traits with a different meaning. An unsafe trait is one where implementors prove a safety predicate relied on by the caller, as opposed to an `unsafe`-colored trait, which is a trait where the caller proves a safety predicate relied upon by the impl.
-* Third, the `unsafe_op_in_unsafe_fn` lint is moving from allow-by-default to warn- or deny-by-default. This means that migrating `unsafe fn foo() { ... }` is not exactly equivalent to `unsafe fn foo() { unsafe { ... } }`, as we might expect for [non-rewrite colors](#const-functions-cant-be-rewritten-to-have-a-const-block-in-their-body-is-that-inconsistent-with-async).
+It's also worth noting the `unsafe_op_in_unsafe_fn` lint, which encourages the use of `unsafe` blocks even within an `unsafe` function. This is likely to be different from other effect-carrying colors that could be added (e.g., perhaps one that tracks whether allocation or panics can occur in a function). This difference stems in part from the fact that `unsafe` is not tracking an "effect" that occurs at runtime but rather an aid to static reasoning.
 
 ### `try` as a color
 
-This RFC suggests that, to be stabilized, `try` blocks should become a rewrite color. This would mean extending to `try fn` and `🚲try<T>` notation.
+The `try` keyword was introduced in [RFC #243][], along with the `?` operator. It has been unstable since [RFC #243][] was merged in 2016 and has seen significant evolution.
 
-The big challenge for `try` as a color is that `?` and try blocks can work with so many different types. `🚲try<T>` could be a result, an option, etc, and it will not be the same across all programs, as e.g. error types vary.
+As described in [RFC #243][], a `try { $expr }` block executes `$expr` and "captures" any `?` operations that occur within. On successful completion, the result of the try block is not the result of `$expr` but rather an "ok-wrapped" variant. The term "ok wrapping" refers to the common case where the `try` block produces a `Result`; the idea is that `try { 22 }` would be equivalent to `Ok(22)`. During the course of `try`'s long history, the design [temporarily changed *not* to `Ok`-wrap][#41414]. However, [the original design was ultimately restored][#70941].
 
-One possibility that we discussed was permitting the user to explicitly declare (and important) `try` colors themselves in the form of a type alias. For example, the `std::io::Result<T>` pattern might instead be:
+[#41414]: https://github.com/rust-lang/rust/issues/41414
+[#70941]: https://github.com/rust-lang/rust/issues/70941
+
+Looking at `try` as a color, it is clear that ok-wrapping is the correct and consistent behavior. `try`, like `async`, is a fully general color that transforms its result type, and the color pattern specifies that the type of an expression in a block should be "ok-wrapped" to produce the block's final output type. Another point of controversy about `try` has been how to support it syntactically at the function level. This RFC suggests that the right answer is `try fn foo() -> T`, where `T` represents the "ok" type. The final result of calling `foo()` would therefore be `🚲try<T>`, the ok-wrapped version of `T`.
+
+While treating `try` as a color is appealing, it does have one important difference from `async`: `try` and `?` are intended to be usable with many types, including `Result`, `Option`, and others. In terms of the color pattern, it is therefore unclear what the syntax `🚲try<T>` should expand to.
+
+[`Try`]: https://doc.rust-lang.org/std/ops/trait.Try.html
+
+One possibility is permitting the user to explicitly declare (and important) `try` colors themselves in the form of a type alias. For example, the `std::io::Result<T>` pattern might instead be:
 
 ```rust
 // Older alias, deprecated:
@@ -565,9 +694,9 @@ This is only one possibility. There are several other ideas for how try could be
 
 ### `gen` as a color
 
-The `gen` keyword has been proposed for introducing generator blocks, which are a syntactic pattern to make it easier to write iterators (and perhaps to fill other use cases, there is a range of design space still to be covered). One notation proposed for `gen` is `gen<T>`, which appears at first glance to resemble the proposed `async<T>` type notation from [RFC #3628]. However, as proposed, `gen<T>` is actually quite different, as the `T` here represents the type of value that is yielded by the iterator. Therefore the generator may produce any number of `T` instances, whereas `async<T>` produces exactly one `T` instance. This means that they are used very differently by users, and it is unclear whether they should be considered a "color" -- for example, does `gen Default` make sense? If so, what would it mean?
+The `gen` keyword has been proposed for introducing generator blocks, which are a syntactic pattern to make it easier to write iterators (and perhaps to fill other use cases, there is a range of design space still to be covered). One notation proposed for `gen` is `gen<T>`, which appears at first glance to resemble the proposed `async<T>` type notation from [RFC #3628]. However, as proposed, `gen<T>` is actually quite different, as the `T` here represents the type of value that is yielded by the iterator. Therefore the generator may produce any number of `T` instances, whereas `async<T>` produces exactly one `T` instance. This means that they are used very differently by users, and it is unclear whether what parts of the color pattern should apply to `gen` in this case.
 
-There is some precedent for treating "generators" as color-*like* things. In Haskell, the List monad performs implicit `flat_map` operations, meaning that a given piece of code may execute many times. In Rust terms, this would correspond to nested for loops. Consider the following Rust-like pseudocode:
+That said, there is some precedent for treating "generators" as color-*like* things. In Haskell, the `List` monad performs implicit `flat_map` operations, meaning that a given piece of code may execute many times. In Rust terms, this would correspond to nested `for` loops. Consider the following Rust-like pseudocode:
 
 ```rust
 gen fn even() yields u32 {
@@ -597,9 +726,9 @@ gen fn all() yields u32 {
 }
 ```
 
-This understanding of gen does not map well to rewrite colors. Compare to `async`: it makes total sense to define an `async Default` trait -- that is an `async`-colored version of `Default` where the `default` method is an `async fn`. But what does `gen Default` mean: the `default` method returns a generator yielding `Self` values? That is quite a different trait and doens't feel like a "color", which is basically a function that is only compatible with other functions of the same color.
+This understanding of gen does not map well to colors. Compare to `async`: it makes total sense to define an `async Default` trait -- that is an `async`-colored version of `Default` where the `default` method is an `async fn`. But what does `gen Default` mean: the `default` method returns a generator yielding `Self` values? Is that a useful transformation to be able to make?
 
-There is however a way to make `gen` fit well into the color system. Generators can be thought of as a color if the yielded values are considered a side channel. Like `try`, then, the generator "color" is not just a keyword but includes the type of value that will be yielded as the generator executes. The `gen-type!($ty)` definition for a generating yielding values of type `Y` is therefore `impl Generator<Yield = Y, Output = $ty>`. The `gen-do!(v)` operation becomes "yield-all", taking every item from the generator `v` and yielding it in turn, before returning the final output.
+Another way to look at `gen` is to look at yielding as a kind of *side effect* that the function performs along the way to computing its final value. The iterator trait doesn't have a final value (or, equivalently, only has a value of `()`), but other generators do have this distinction (a `Future<Output = T>` can be seen as a generator that yields up `()` values whenever it needs to suspend and produces a `T` once complete, for example). Looking at `gen` from this perspective, the generator "color" is not just a keyword but includes the type of value that will be yielded as the generator executes. The `🚲try<$ty>` definition for a generating yielding values of type `Y` is therefore `impl Generator<Yield = Y, Output = $ty>`. Given a generator, a `yield_all` operator could be defined (analogous to `await` for `async` or `?` for `try`) that takes every item from the generator `v` and yields it in turn, before returning the final output.
 
 Here is an example using the hypothesized "yield all" construct, showing how you could work with `gen` as a color. In this case, the `yield_all` 'unwraps' the generator effect, propagating the yielded values, and returning the final value. Calling `outer` would then yield up [`0`, `1`, `2`, `6`, `7`, `8`] and return 42. Note how `.yield_all` appears at the same places that `.await` would appear if these were async functions:
 
@@ -621,3 +750,5 @@ gen(yields u32) fn starting_at(x: u32) -> u32 {
     sum * 2
 }
 ```
+
+It is unclear whether this perspective of `gen<Yields = T>` as a color is a useful one for users (and that syntax is not the most elegant).
