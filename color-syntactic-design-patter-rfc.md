@@ -299,7 +299,7 @@ The other points do not apply. The implication of this is that we should support
 
 > The "color pattern" is meant to guide Rust designers as we extend the language, not to be something directly taught to end users. To illustrate how it might feel, this section covers an example of teaching `async` leveraging the syntax and concepts of the color pattern (but not teaching the pattern explicitly). To help illustrate where the overall vision for Rust, we assume that `🚲K<$T>` is `K -> $T` (a variant of [RFC #3628][] currently preferred by the author), that `async -> T` and its equivalent `impl Trait<Output = T>` are supported in local variable declarations ([RFC #2071][]), and that there is some form of `async Iterator` trait available in std.
 
-## Async functions
+### Async functions
 
 Rust's `async` functions are a built-in feature designed for building concurrent applications. Async functions are just like regular functions, but prefix with the `async` keyword:
 
@@ -367,7 +367,7 @@ let future: async -> (Vec<Data>, Vec<Data>) = join!(future_1, future_2);
 let (data_1, data_2): (Vec<Data>, Vec<Data>) = future.await; 
 ```
 
-## Async blocks
+### Async blocks
 
 In addition to async functions, Rust supports async *blocks*. These are a lighterweight alternative to defining an async function and are useful when you want to suspend execution of a small piece of code that references various things from its environment, similar to a closure. For example, we might like to make a future that invokes `load_data`, awaits the result, and then does some light pre-processing:
 
@@ -390,11 +390,11 @@ let (data_1, data_2) = join!(
 
 Here, the futures supplied to the `join!` macro are two async blocks, instead of just calls to `load_data`.
 
-### `async` vs `async move`
+#### `async` vs `async move`
 
 Async blocks resemble closures in some ways. Just as a Rust closure by default takes references to variables from the surrounding stack frame, async blocks yield futures that store references to the variables they need whenever possible. You can however use the `async move` syntax to force the future to take ownership of any data that is uses.
 
-## Async closures
+### Async closures
 
 We previous defined `load_data` using a `for` loop:
 
@@ -435,7 +435,7 @@ async fn load_data(input_urls: &[Url]) -> Vec<Data> {
 
 > **Meta note:** We are assuming here that some kind of `async Iterator` trait is eventually added that supports functionality similar to [`futures::Stream`](https://docs.rs/futures/latest/futures/prelude/trait.Stream.html). This functionality is not specified in this RFC.
 
-## Desugaring async functions into async blocks
+### Desugaring async functions into async blocks
 
 The `async fn` syntax is actually a shorthand for a more general form of declaration that makes use of `async -> T` types and `async` blocks. The more general declaration is formed by moving the `async` keyword from before the `fn` to the return type and then transforming the body to use an `async move` block:
 
@@ -458,7 +458,7 @@ fn load_data(urls: &[Url]) -> async -> Data {
 }
 ```
 
-## Comparing async-await in Rust to async-await in other languages
+### Comparing async-await in Rust to async-await in other languages
 
 Many languages have some variant of async-await notation and so async functions in Rust likely look familiar to you. That's good! But be aware that async-await works differently in Rust than most other languages.
 
@@ -473,7 +473,7 @@ let data_future = tokio::spawn(async move { load_data(urls).await });
 // ... `data` is not being loaded in the background, in parallel ...
 ```
 
-## Digging deeper: the `Future` trait
+### Digging deeper: the `Future` trait
 
 We have thus far avoided saying precisely what a future *is*, apart from a "suspended computation". The more precise answer is that a future is a value that implements the `Future` trait. The notation `async<T>` that we have been using is in fact a shorthand for `impl Future<Output = T>`, meaning "a value of some type that implements `Future<Output = T>`". We introduced the `impl Future` notation in Chapter XX, and `async -> T` works the same way:
 
