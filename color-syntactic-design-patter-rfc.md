@@ -38,10 +38,14 @@ Some colors rewrite code so that it executes differently (e.g., `async`). These 
         * `K fn $name($args) -> $ty { $expr }`
         * `fn $name($args) -> 🚲K<$ty> { K { $expr } }`
 
+## Binding recommendations
+
 Existing color-like keywords in the language do not have all of these parts. The RFC therefore includes a limited set of binding recommendations that brings them closer to conformance:
 
 * Commit to `K $Trait` as the syntax for applying colors to traits, with the `async Fn`, `async FnMut`, and `async FnOnce` traits being the only current usable example.
 * Commit to adding a TBD syntax `🚲async<$ty>` that will meet the equivalences described in this RFC.
+
+## Not part of this RFC
 
 The [Future Possibilities](#future-possibilities) discusses other changes we could make to make existing and planned colors fit the pattern better. Examples of things that this RFC does NOT specify (but which early readers thought it might):
 
